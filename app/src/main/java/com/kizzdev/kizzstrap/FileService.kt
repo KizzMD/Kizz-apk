@@ -6,7 +6,12 @@ import kotlin.system.exitProcess
 /** Berjalan di proses terpisah dengan hak akses shell (dijalankan oleh Shizuku). */
 class FileService : IFileService.Stub() {
 
-    private val allowedRoot = "/sdcard/Android/data/com.roblox.client"
+    private fun allowed(path: String): Boolean {
+        val base = "/sdcard/Android/data/"
+        if (path.contains("..") || !path.startsWith(base)) return false
+        val pkg = path.removePrefix(base).substringBefore('/')
+        return pkg.contains("roblox", ignoreCase = true)
+    }
 
     override fun destroy() {
         exitProcess(0)
@@ -59,7 +64,7 @@ class FileService : IFileService.Stub() {
     }
 
     override fun deleteRecursive(path: String, keepRoot: Boolean): String = try {
-        if (path.contains("..") || !path.startsWith(allowedRoot)) {
+        if (!allowed(path)) {
             "ERR: path di luar folder Roblox ditolak"
         } else {
             val f = File(path)

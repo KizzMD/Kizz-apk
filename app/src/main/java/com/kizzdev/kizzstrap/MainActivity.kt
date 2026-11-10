@@ -3,12 +3,23 @@ package com.kizzdev.kizzstrap
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
+import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,6 +30,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,7 +41,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -42,16 +54,23 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -61,18 +80,24 @@ import org.json.JSONArray
 import org.json.JSONObject
 import rikka.shizuku.Shizuku
 
-private const val PKG = "com.roblox.client"
-private const val DEFAULT_PATH = "/sdcard/Android/data/$PKG/files/ClientSettings/ClientAppSettings.json"
+private const val ROBLOX = "com.roblox.client"
 
-private val BG = Color(0xFF0A0A14)
-private val CARD = Color(0xFF14142A)
-private val VIOLET = Color(0xFF8B5CF6)
-private val CYAN = Color(0xFF22D3EE)
-private val PINK = Color(0xFFF472B6)
-private val TXT = Color(0xFFEDEDFF)
-private val SUB = Color(0xFF9A9AB8)
-private val GRAD = Brush.horizontalGradient(listOf(VIOLET, PINK))
-private val FLAT = Brush.horizontalGradient(listOf(Color(0xFF22223C), Color(0xFF22223C)))
+private fun defPath(p: String) = "/sdcard/Android/data/$p/files/ClientSettings/ClientAppSettings.json"
+
+private val BG = Color(0xFF07040F)
+private val CARD = Color(0xFF130B24)
+private val VIOLET = Color(0xFF8B3DFF)
+private val MAGENTA = Color(0xFFC026D3)
+private val LILAC = Color(0xFFD8B4FE)
+private val TXT = Color(0xFFF3E8FF)
+private val SUB = Color(0xFFA78BCA)
+private val OKC = Color(0xFF34D399)
+private val BAD = Color(0xFFF87171)
+private val GRAD = Brush.horizontalGradient(listOf(VIOLET, MAGENTA))
+private val GRAD_V = Brush.verticalGradient(listOf(VIOLET, MAGENTA))
+private val FLAT = Brush.horizontalGradient(listOf(Color(0xFF241638), Color(0xFF241638)))
+private val CUT = CutCornerShape(topStart = 18.dp, bottomEnd = 18.dp)
+private val CUT_S = CutCornerShape(topStart = 10.dp, bottomEnd = 10.dp)
 
 data class Cfg(
     val on: Set<String> = emptySet(),
@@ -131,6 +156,11 @@ private val TOGGLES = listOf(
         listOf("DFFlagTextureQualityOverrideEnabled" to true, "DFIntTextureQualityOverride" to 0)
     ),
     Tog(
+        "mips", "Turunkan tekstur jarak jauh",
+        "Melewati level mip tekstur untuk menghemat memori.",
+        listOf("FIntDebugTextureManagerSkipMips" to 8)
+    ),
+    Tog(
         "shadow", "Nonaktifkan bayangan",
         "Mematikan bayangan dalam game untuk meringankan GPU.",
         listOf("FIntRenderShadowIntensity" to 0)
@@ -150,9 +180,32 @@ private val TOGGLES = listOf(
         )
     ),
     Tog(
+        "wind", "Matikan angin global",
+        "Menghentikan animasi angin pada tanaman dan partikel.",
+        listOf("FFlagGlobalWindActivated" to false, "FFlagGlobalWindRendering" to false)
+    ),
+    Tog(
         "light", "Batasi cahaya lokal",
         "Mengurangi pembaruan cahaya lokal yang berat di GPU.",
         listOf("FIntRenderLocalLightUpdatesMax" to 1, "FIntRenderLocalLightUpdatesMin" to 1)
+    ),
+    Tog(
+        "cull", "Culling cahaya GPU",
+        "Membuang cahaya di luar pandangan supaya GPU lebih ringan.",
+        listOf("FFlagFastGPULightCulling3" to true)
+    ),
+    Tog(
+        "tele", "Matikan telemetri",
+        "Mengurangi kerja CPU dan jaringan di latar belakang.",
+        listOf(
+            "FFlagDebugDisableTelemetryEphemeralCounter" to true,
+            "FFlagDebugDisableTelemetryEphemeralStat" to true,
+            "FFlagDebugDisableTelemetryEventIngest" to true,
+            "FFlagDebugDisableTelemetryPoint" to true,
+            "FFlagDebugDisableTelemetryV2Counter" to true,
+            "FFlagDebugDisableTelemetryV2Event" to true,
+            "FFlagDebugDisableTelemetryV2Stat" to true
+        )
     ),
     Tog(
         "sky", "Langit abu-abu (SkyGray)",
@@ -166,13 +219,17 @@ private val TOGGLES = listOf(
     )
 )
 
+private val ALL_IDS = TOGGLES.map { it.id }.toSet()
+
 private val BUILTIN = listOf(
-    "Antilag Ringan" to Cfg(on = setOf("postfx", "grass", "shadow", "fpscount"), fps = 60),
+    "Antilag Ringan" to Cfg(on = setOf("postfx", "grass", "shadow", "tele", "fpscount"), fps = 60),
     "Antilag Maksimal" to Cfg(
-        on = setOf("booster", "lod", "tex", "shadow", "postfx", "grass", "light", "sky"),
+        on = setOf("booster", "lod", "tex", "shadow", "postfx", "grass", "light", "wind", "tele", "sky"),
         msaa = 1, frm = 1, renderer = 1, res = 720, fps = 60
     ),
-    "Seimbang" to Cfg(on = setOf("postfx", "grass"), msaa = 2, frm = 8, fps = 90),
+    "Potato Ekstrem" to Cfg(on = ALL_IDS - "fpscount", msaa = 1, frm = 1, renderer = 1, res = 540, fps = 60),
+    "Seimbang" to Cfg(on = setOf("postfx", "grass", "tele"), msaa = 2, frm = 8, fps = 90),
+    "Pamer FPS 120" to Cfg(on = setOf("postfx", "shadow", "tele", "fpscount"), msaa = 1, fps = 120),
     "Bersih (tanpa FastFlag)" to Cfg()
 )
 
@@ -203,9 +260,9 @@ private fun buildJson(c: Cfg, customText: String): JSONObject {
         null
     }
     if (extra != null) {
-        val it = extra.keys()
-        while (it.hasNext()) {
-            val k = it.next()
+        val keys = extra.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
             o.put(k, extra.get(k))
         }
     }
@@ -221,13 +278,19 @@ class MainActivity : ComponentActivity() {
     private var status by mutableStateOf("Memeriksa Shizuku...")
     private var logText by mutableStateOf("")
 
+    private var splashOn by mutableStateOf(true)
     private var tab by mutableStateOf(0)
     private var cfg by mutableStateOf(Cfg())
     private var custom by mutableStateOf("{\n}")
-    private var path by mutableStateOf(DEFAULT_PATH)
+    private var pkg by mutableStateOf(ROBLOX)
+    private var pkgs by mutableStateOf(listOf(ROBLOX))
+    private var manualPkg by mutableStateOf("")
+    private var path by mutableStateOf(defPath(ROBLOX))
+    private var found by mutableStateOf<List<String>>(emptyList())
     private var applyOnLaunch by mutableStateOf(true)
     private var saved by mutableStateOf<List<Pair<String, Cfg>>>(emptyList())
     private var presetName by mutableStateOf("")
+    private var placeInput by mutableStateOf("")
 
     private val canUse: Boolean get() = ready && service != null
 
@@ -235,6 +298,7 @@ class MainActivity : ComponentActivity() {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             service = IFileService.Stub.asInterface(binder)
             logText = "Service Shizuku terhubung"
+            scanPackages()
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
@@ -296,6 +360,55 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
+    private fun selectPkg(p: String) {
+        pkg = p
+        path = defPath(p)
+        found = emptyList()
+        persist()
+    }
+
+    private fun scanPackages() {
+        val s = service ?: return
+        Thread {
+            val r = try {
+                s.exec("pm list packages | grep -i roblox")
+            } catch (e: Exception) {
+                "ERR: ${e.message}"
+            }
+            val list = r.lines()
+                .filter { it.startsWith("package:") }
+                .map { it.removePrefix("package:").trim() }
+            runOnUiThread {
+                if (list.isNotEmpty()) {
+                    pkgs = list
+                    if (pkg !in list) selectPkg(list[0])
+                }
+                logText = "Scan Roblox: ${list.size} paket ditemukan\n" + list.joinToString("\n")
+            }
+        }.start()
+    }
+
+    private fun scanFiles() {
+        val s = service
+        if (s == null) {
+            logText = "Service belum terhubung. Cek status Shizuku."
+            return
+        }
+        val root = "/sdcard/Android/data/$pkg"
+        logText = "Mencari file pengaturan..."
+        Thread {
+            val r = try {
+                s.findFiles(root, "settings", 6)
+            } catch (e: Exception) {
+                "ERR: ${e.message}"
+            }
+            runOnUiThread {
+                found = r.lines().filter { it.startsWith("/") }
+                logText = "Pencarian selesai: ${found.size} hasil\n$r"
+            }
+        }.start()
+    }
+
     private fun currentJson(): String = buildJson(cfg, custom).toString(2)
 
     private fun applyNow(label: String, after: (() -> Unit)? = null) {
@@ -321,25 +434,54 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
+    private fun prepareThen(next: () -> Unit) {
+        val s = service
+        if (s == null || !applyOnLaunch) {
+            next()
+            return
+        }
+        val p = pkg
+        applyNow("Menerapkan FastFlag") {
+            Thread {
+                try {
+                    s.exec("am force-stop $p")
+                } catch (e: Exception) {
+                }
+                runOnUiThread { next() }
+            }.start()
+        }
+    }
+
     private fun launchRoblox() {
-        val i = packageManager.getLaunchIntentForPackage(PKG)
-        if (i == null) logText = "Roblox belum terpasang" else startActivity(i)
+        val i = packageManager.getLaunchIntentForPackage(pkg)
+        if (i != null) {
+            startActivity(i)
+        } else {
+            val p = pkg
+            bg("Meluncurkan $p") { it.exec("monkey -p $p -c android.intent.category.LAUNCHER 1") }
+        }
     }
 
     private fun launchAll() {
-        val s = service
-        if (s == null || !applyOnLaunch) {
-            launchRoblox()
+        prepareThen { launchRoblox() }
+    }
+
+    private fun joinGame() {
+        val m = Regex("(\\d{4,})").find(placeInput)
+        if (m == null) {
+            logText = "Isi Place ID atau tempel link game Roblox"
             return
         }
-        applyNow("Menerapkan dan meluncurkan") {
-            Thread {
-                try {
-                    s.exec("am force-stop $PKG")
-                } catch (e: Exception) {
-                }
-                runOnUiThread { launchRoblox() }
-            }.start()
+        val id = m.value
+        prepareThen {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("roblox://experiences/start?placeId=$id"))
+                    .setPackage(pkg)
+                startActivity(intent)
+                logText = "Membuka game $id di $pkg"
+            } catch (e: Exception) {
+                logText = "Gagal membuka game: ${e.message}"
+            }
         }
     }
 
@@ -367,9 +509,9 @@ class MainActivity : ComponentActivity() {
     private fun loadSaved(): List<Pair<String, Cfg>> = try {
         val o = JSONObject(prefs.getString("presets", "{}") ?: "{}")
         val out = ArrayList<Pair<String, Cfg>>()
-        val it = o.keys()
-        while (it.hasNext()) {
-            val k = it.next()
+        val keys = o.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
             out.add(k to Cfg.from(o.getJSONObject(k)))
         }
         out
@@ -388,20 +530,21 @@ class MainActivity : ComponentActivity() {
             .putString("cfg", cfg.toJson().toString())
             .putString("custom", custom)
             .putString("path", path)
+            .putString("pkg", pkg)
             .putBoolean("aol", applyOnLaunch)
             .apply()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = 0xFF0A0A14.toInt()
-        window.navigationBarColor = 0xFF0A0A14.toInt()
         try {
             cfg = Cfg.from(JSONObject(prefs.getString("cfg", "{}") ?: "{}"))
         } catch (e: Exception) {
         }
         custom = prefs.getString("custom", custom) ?: custom
-        path = prefs.getString("path", path) ?: path
+        pkg = prefs.getString("pkg", ROBLOX) ?: ROBLOX
+        pkgs = listOf(pkg)
+        path = prefs.getString("path", defPath(pkg)) ?: defPath(pkg)
         applyOnLaunch = prefs.getBoolean("aol", true)
         saved = loadSaved()
 
@@ -410,8 +553,8 @@ class MainActivity : ComponentActivity() {
         Shizuku.addRequestPermissionResultListener(permResult)
         setContent {
             MaterialTheme(
-                colorScheme = darkColorScheme(primary = VIOLET, secondary = CYAN, background = BG, surface = CARD)
-            ) { App() }
+                colorScheme = darkColorScheme(primary = VIOLET, secondary = MAGENTA, background = BG, surface = CARD)
+            ) { Root() }
         }
     }
 
@@ -435,8 +578,27 @@ class MainActivity : ComponentActivity() {
     // ---------------------------------------------------------------- UI
 
     @Composable
+    private fun Root() {
+        val prog = remember { Animatable(0f) }
+        LaunchedEffect(Unit) {
+            prog.animateTo(1f, tween(2300, easing = LinearEasing))
+            splashOn = false
+        }
+        val a by animateFloatAsState(if (splashOn) 1f else 0f, tween(500), label = "fade")
+        Box(Modifier.fillMaxSize()) {
+            App()
+            if (a > 0.01f) Splash(prog.value, Modifier.alpha(a))
+        }
+    }
+
+    @Composable
     private fun App() {
-        Box(Modifier.fillMaxSize().background(BG).systemBarsPadding()) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Brush.verticalGradient(listOf(Color(0xFF1A0B3B), BG, BG)))
+                .systemBarsPadding()
+        ) {
             Column(Modifier.fillMaxSize()) {
                 Header()
                 Column(
@@ -453,7 +615,7 @@ class MainActivity : ComponentActivity() {
                         else -> TabPreset()
                     }
                     LogCard()
-                    Spacer(Modifier.height(110.dp))
+                    Spacer(Modifier.height(120.dp))
                 }
             }
             BottomBar(Modifier.align(Alignment.BottomCenter))
@@ -462,33 +624,57 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun Header() {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color(0xFF2A1B5E), BG)))
-                .padding(horizontal = 20.dp, vertical = 18.dp)
-        ) {
-            Column {
-                Text("KizzDev", color = TXT, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
-                Text("FastFlag dan Antilag Roblox", color = SUB, fontSize = 13.sp)
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(if (canUse) Color(0xFF34D399) else Color(0xFFF87171))
+        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painterResource(R.drawable.kizz_logo),
+                    contentDescription = null,
+                    modifier = Modifier.size(62.dp).clip(CUT_S).border(1.dp, GRAD, CUT_S),
+                    contentScale = ContentScale.Crop
+                )
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(
+                        "KizzDev",
+                        style = TextStyle(
+                            brush = GRAD,
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.Black,
+                            fontStyle = FontStyle.Italic,
+                            letterSpacing = 1.sp
+                        )
                     )
-                    Spacer(Modifier.width(8.dp))
-                    Text(status, color = SUB, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                    if (!ready) Btn("Beri izin", enabled = true, filled = true) { requestPerm() }
+                    Text("FASTFLAG  •  ANTILAG  •  ROBLOX", color = SUB, fontSize = 10.sp, letterSpacing = 1.sp)
                 }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(10.dp).clip(CircleShape).background(if (canUse) OKC else BAD))
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(status, color = TXT, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(pkg, color = SUB, fontSize = 11.sp)
+                }
+                if (!ready) Btn("Beri izin") { requestPerm() }
             }
         }
     }
 
     @Composable
     private fun TabFlags() {
+        Panel("Versi Roblox") {
+            Label("Pilih Roblox yang mau dioptimasi (mendukung versi regional dan klon)")
+            Chips(pkgs.map { it to it }, pkg) { selectPkg(it) }
+            Btn("Scan Roblox terpasang", Modifier.fillMaxWidth(), canUse, false) { scanPackages() }
+            Field(manualPkg, "Atau ketik nama paket manual") { manualPkg = it }
+            Btn("Pakai paket ini", Modifier.fillMaxWidth(), true, false) {
+                val p = manualPkg.trim()
+                if (p.isNotEmpty()) {
+                    if (p !in pkgs) pkgs = pkgs + p
+                    selectPkg(p)
+                }
+            }
+        }
         Panel("Mode optimasi") {
             SwitchRow(
                 "Terapkan saat Luncurkan",
@@ -506,9 +692,9 @@ class MainActivity : ComponentActivity() {
                 valueRange = 0f..21f,
                 steps = 20,
                 colors = SliderDefaults.colors(
-                    thumbColor = PINK,
+                    thumbColor = MAGENTA,
                     activeTrackColor = VIOLET,
-                    inactiveTrackColor = Color(0xFF2A2A44)
+                    inactiveTrackColor = Color(0xFF2A1A44)
                 )
             )
             Label("Renderer")
@@ -527,6 +713,10 @@ class MainActivity : ComponentActivity() {
             Label("FPS sebenarnya tetap tergantung game dan GPU.")
         }
         Panel("Optimasi dan efek visual") {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Btn("Aktifkan semua", Modifier.weight(1f), true, false) { cfg = cfg.copy(on = ALL_IDS) }
+                Btn("Matikan semua", Modifier.weight(1f), true, false) { cfg = cfg.copy(on = emptySet()) }
+            }
             TOGGLES.forEach { t ->
                 SwitchRow(t.title, t.desc, t.id in cfg.on) { v ->
                     cfg = cfg.copy(on = if (v) cfg.on + t.id else cfg.on - t.id)
@@ -540,14 +730,27 @@ class MainActivity : ComponentActivity() {
         Panel("Lokasi file pengaturan") {
             Field(path, "Path ClientAppSettings.json") { path = it }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Btn("Deteksi otomatis", Modifier.weight(1f), canUse, false) {
-                    bg("Mencari file pengaturan") { it.findFiles("/sdcard/Android/data/$PKG", "settings", 6) }
-                }
+                Btn("Deteksi otomatis", Modifier.weight(1f), canUse, false) { scanFiles() }
                 Btn("Lihat folder", Modifier.weight(1f), canUse, false) {
                     bg("Isi folder") { it.listDir(path.substringBeforeLast('/')) }
                 }
             }
-            Label("Hasil muncul di Log di bawah. Salin path yang benar ke kolom di atas.")
+            if (found.isEmpty()) {
+                Label("Tekan Deteksi otomatis. Hasilnya muncul di sini dan bisa langsung dipakai.")
+            }
+            found.forEach { f ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        f.removePrefix("/sdcard/Android/data/"),
+                        color = LILAC, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Btn("Pakai") {
+                        path = if (f.endsWith(".json")) f else "$f/ClientAppSettings.json"
+                        logText = "Path diganti ke $path"
+                    }
+                }
+            }
         }
         Panel("FastFlag tambahan (JSON)") {
             Field(custom, "JSON tambahan", 120.dp) { custom = it }
@@ -558,7 +761,7 @@ class MainActivity : ComponentActivity() {
         }
         Panel("JSON yang akan ditulis") {
             SelectionContainer {
-                Text(currentJson(), color = CYAN, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                Text(currentJson(), color = LILAC, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
             }
         }
         Panel("Aksi file") {
@@ -576,42 +779,73 @@ class MainActivity : ComponentActivity() {
                     bg("Restore") { it.copyFile("$path.bak", path) }
                 }
             }
+            Btn("Reset FastFlag (kosongkan file)", Modifier.fillMaxWidth(), canUse, false) {
+                bg("Reset FastFlag") { it.writeFile(path, "{}") }
+            }
             Btn("Terapkan sekarang", Modifier.fillMaxWidth(), canUse, true) { applyNow("Menerapkan") }
         }
     }
 
     @Composable
     private fun TabGame() {
+        Panel("Gabung game cepat") {
+            Field(placeInput, "Place ID atau link game Roblox") { placeInput = it }
+            Btn("Buka game", Modifier.fillMaxWidth(), true, true) { joinGame() }
+            Label("Memakai Roblox terpilih: $pkg")
+        }
         Panel("Antilag cepat") {
             ActionRow("Force stop Roblox", "Menutup Roblox sepenuhnya supaya pengaturan baru terbaca.", canUse) {
-                bg("Force stop") { it.exec("am force-stop $PKG") }
+                bg("Force stop") { it.exec("am force-stop $pkg") }
             }
             ActionRow("Bersihkan cache Roblox", "Menghapus cache tanpa menghapus login atau data game.", canUse) {
-                bg("Bersihkan cache") { it.deleteRecursive("/sdcard/Android/data/$PKG/cache", true) }
+                bg("Bersihkan cache") { it.deleteRecursive("/sdcard/Android/data/$pkg/cache", true) }
             }
             ActionRow("Bersihkan RAM latar belakang", "Menutup aplikasi lain di latar belakang agar RAM lega.", canUse) {
                 bg("Bersihkan RAM") { it.exec("am kill-all") }
             }
         }
         Panel("Mode performa sistem") {
-            ActionRow("Game mode: Performa", "Meminta sistem memberi prioritas performa untuk Roblox (Android 12 ke atas).", canUse) {
-                bg("Game mode Performa") { it.exec("cmd game mode performance $PKG") }
+            ActionRow("Game mode: Performa", "Meminta sistem memberi prioritas performa (Android 12 ke atas).", canUse) {
+                bg("Game mode Performa") { it.exec("cmd game mode performance $pkg") }
             }
-            ActionRow("Game mode: Standar", "Mengembalikan Roblox ke mode normal.", canUse) {
-                bg("Game mode Standar") { it.exec("cmd game mode standard $PKG") }
+            ActionRow("Game mode: Standar", "Mengembalikan ke mode normal.", canUse) {
+                bg("Game mode Standar") { it.exec("cmd game mode standard $pkg") }
+            }
+            ActionRow("Prioritas aplikasi aktif", "Menaikkan prioritas Roblox di manajer aplikasi latar belakang.", canUse) {
+                bg("Prioritas aktif") { it.exec("am set-standby-bucket $pkg active") }
             }
             ActionRow("Kecualikan dari hemat baterai", "Roblox tidak dibatasi mode hemat daya saat dimainkan.", canUse) {
-                bg("Whitelist baterai") { it.exec("cmd deviceidle whitelist +$PKG") }
+                bg("Whitelist baterai") { it.exec("cmd deviceidle whitelist +$pkg") }
             }
             ActionRow("Kompilasi cepat", "Mengoptimalkan kode aplikasi Roblox. Bisa makan beberapa menit.", canUse) {
-                bg("Kompilasi") { it.exec("cmd package compile -m speed-profile -f $PKG") }
+                bg("Kompilasi") { it.exec("cmd package compile -m speed-profile -f $pkg") }
+            }
+        }
+        Panel("Animasi sistem") {
+            ActionRow("Animasi 0.5x", "Mempercepat animasi sistem agar terasa lebih responsif.", canUse) {
+                bg("Animasi 0.5x") {
+                    it.exec(
+                        "settings put global window_animation_scale 0.5; " +
+                            "settings put global transition_animation_scale 0.5; " +
+                            "settings put global animator_duration_scale 0.5"
+                    )
+                }
+            }
+            ActionRow("Animasi normal 1x", "Mengembalikan animasi sistem seperti semula.", canUse) {
+                bg("Animasi 1x") {
+                    it.exec(
+                        "settings put global window_animation_scale 1; " +
+                            "settings put global transition_animation_scale 1; " +
+                            "settings put global animator_duration_scale 1"
+                    )
+                }
             }
         }
         Panel("Info") {
             ActionRow("Info Roblox", "Versi terpasang dan ukuran cache.", canUse) {
                 bg("Info Roblox") { s ->
-                    val v = s.exec("dumpsys package $PKG | grep -m2 -E 'versionName|versionCode'")
-                    val c = s.sizeOf("/sdcard/Android/data/$PKG/cache")
+                    val v = s.exec("dumpsys package $pkg | grep -m2 -E 'versionName|versionCode'")
+                    val c = s.sizeOf("/sdcard/Android/data/$pkg/cache")
                     "$v\nCache: ${c / 1024 / 1024} MB"
                 }
             }
@@ -624,7 +858,7 @@ class MainActivity : ComponentActivity() {
             BUILTIN.forEach { (n, c) ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(n, color = TXT, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    Btn("Pakai", enabled = true, filled = false) {
+                    Btn("Pakai") {
                         cfg = c
                         logText = "Preset \"$n\" dipakai. Tekan Terapkan atau tombol ▶."
                     }
@@ -647,11 +881,11 @@ class MainActivity : ComponentActivity() {
             saved.forEach { (n, c) ->
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(n, color = TXT, fontSize = 14.sp, modifier = Modifier.weight(1f))
-                    Btn("Pakai", enabled = true, filled = false) {
+                    Btn("Pakai") {
                         cfg = c
                         logText = "Preset \"$n\" dipakai"
                     }
-                    Btn("Hapus", enabled = true, filled = false) {
+                    Btn("Hapus") {
                         saved = saved.filter { it.first != n }
                         storeSaved()
                     }
@@ -666,7 +900,7 @@ class MainActivity : ComponentActivity() {
             SelectionContainer {
                 Text(
                     if (logText.isBlank()) "Belum ada aktivitas" else logText,
-                    color = CYAN, fontFamily = FontFamily.Monospace, fontSize = 12.sp
+                    color = LILAC, fontFamily = FontFamily.Monospace, fontSize = 12.sp
                 )
             }
         }
@@ -674,14 +908,14 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun BottomBar(modifier: Modifier) {
-        val shape = RoundedCornerShape(30.dp)
+        val shape = CutCornerShape(topStart = 24.dp, bottomEnd = 24.dp)
         Box(modifier.fillMaxWidth().padding(16.dp)) {
             Row(
                 Modifier
                     .fillMaxWidth()
                     .clip(shape)
-                    .background(Color(0xF014142A))
-                    .border(1.dp, VIOLET.copy(alpha = 0.45f), shape)
+                    .background(Color(0xF2130B24))
+                    .border(1.dp, Brush.horizontalGradient(listOf(VIOLET, MAGENTA)), shape)
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly
@@ -693,6 +927,7 @@ class MainActivity : ComponentActivity() {
                         .size(64.dp)
                         .clip(CircleShape)
                         .background(GRAD)
+                        .border(2.dp, LILAC.copy(alpha = 0.6f), CircleShape)
                         .clickable { launchAll() },
                     contentAlignment = Alignment.Center
                 ) { Text("▶", color = Color.White, fontSize = 26.sp) }
@@ -707,7 +942,7 @@ class MainActivity : ComponentActivity() {
         val on = tab == idx
         Column(
             modifier
-                .clip(RoundedCornerShape(16.dp))
+                .clip(CUT_S)
                 .clickable { tab = idx }
                 .padding(vertical = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -716,9 +951,61 @@ class MainActivity : ComponentActivity() {
             Text(
                 label,
                 fontSize = 11.sp,
-                color = if (on) CYAN else SUB,
+                color = if (on) LILAC else SUB,
                 fontWeight = if (on) FontWeight.Bold else FontWeight.Normal
             )
+        }
+    }
+}
+
+// ------------------------------------------------------------ layar loading
+
+@Composable
+private fun Splash(progress: Float, modifier: Modifier = Modifier) {
+    val t = rememberInfiniteTransition(label = "pulse")
+    val s by t.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "scale"
+    )
+    Box(
+        modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(Color(0xFF220B52), Color(0xFF07040F)))),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Image(
+                painterResource(R.drawable.kizz_logo),
+                contentDescription = null,
+                modifier = Modifier.size(230.dp).scale(s).clip(CUT).border(1.5.dp, GRAD, CUT),
+                contentScale = ContentScale.Crop
+            )
+            Spacer(Modifier.height(26.dp))
+            Text(
+                "KIZZDEV",
+                style = TextStyle(
+                    brush = GRAD,
+                    fontSize = 34.sp,
+                    fontWeight = FontWeight.Black,
+                    fontStyle = FontStyle.Italic,
+                    letterSpacing = 6.sp
+                )
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                when {
+                    progress < 0.35f -> "Memuat modul..."
+                    progress < 0.7f -> "Menyiapkan FastFlag..."
+                    else -> "Menghubungkan Shizuku..."
+                },
+                color = SUB, fontSize = 12.sp, letterSpacing = 1.sp
+            )
+            Spacer(Modifier.height(18.dp))
+            Box(Modifier.width(220.dp).height(6.dp).background(Color(0xFF241638))) {
+                Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).fillMaxHeight().background(GRAD))
+            }
         }
     }
 }
@@ -727,21 +1014,30 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun Panel(title: String, content: @Composable ColumnScope.() -> Unit) {
-    val shape = RoundedCornerShape(22.dp)
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(shape)
+            .clip(CUT)
             .background(CARD)
             .border(
                 1.dp,
-                Brush.linearGradient(listOf(VIOLET.copy(alpha = 0.55f), CYAN.copy(alpha = 0.2f))),
-                shape
+                Brush.linearGradient(listOf(VIOLET.copy(alpha = 0.8f), MAGENTA.copy(alpha = 0.25f))),
+                CUT
             )
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text(title, color = TXT, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.width(4.dp).height(16.dp).background(GRAD_V))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                title.uppercase(),
+                color = LILAC,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 13.sp,
+                letterSpacing = 1.5.sp
+            )
+        }
         content()
     }
 }
@@ -765,7 +1061,7 @@ private fun SwitchRow(title: String, desc: String, checked: Boolean, onChange: (
                 checkedThumbColor = Color.White,
                 checkedTrackColor = VIOLET,
                 uncheckedThumbColor = SUB,
-                uncheckedTrackColor = Color(0xFF2A2A44),
+                uncheckedTrackColor = Color(0xFF2A1A44),
                 uncheckedBorderColor = Color.Transparent
             )
         )
@@ -773,7 +1069,7 @@ private fun SwitchRow(title: String, desc: String, checked: Boolean, onChange: (
 }
 
 @Composable
-private fun Chips(options: List<Pair<String, Int>>, selected: Int, onSelect: (Int) -> Unit) {
+private fun <T> Chips(options: List<Pair<String, T>>, selected: T, onSelect: (T) -> Unit) {
     Row(
         Modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -782,7 +1078,7 @@ private fun Chips(options: List<Pair<String, Int>>, selected: Int, onSelect: (In
             val on = v == selected
             Box(
                 Modifier
-                    .clip(RoundedCornerShape(50))
+                    .clip(CUT_S)
                     .background(if (on) GRAD else FLAT)
                     .clickable { onSelect(v) }
                     .padding(horizontal = 14.dp, vertical = 8.dp)
@@ -806,12 +1102,11 @@ private fun Btn(
     filled: Boolean = true,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(14.dp)
-    val base = modifier.clip(shape)
+    val base = modifier.clip(CUT_S)
     val styled = if (filled) {
         base.background(GRAD)
     } else {
-        base.background(Color(0xFF1F1F3A)).border(1.dp, VIOLET.copy(alpha = 0.5f), shape)
+        base.background(Color(0xFF1D1133)).border(1.dp, VIOLET.copy(alpha = 0.6f), CUT_S)
     }
     Box(
         styled
@@ -844,9 +1139,9 @@ private fun Field(value: String, label: String, minH: Dp = 0.dp, onChange: (Stri
             focusedTextColor = TXT,
             unfocusedTextColor = TXT,
             focusedBorderColor = VIOLET,
-            unfocusedBorderColor = Color(0xFF34345A),
-            cursorColor = CYAN,
-            focusedLabelColor = CYAN,
+            unfocusedBorderColor = Color(0xFF3A2860),
+            cursorColor = LILAC,
+            focusedLabelColor = LILAC,
             unfocusedLabelColor = SUB
         )
     )
