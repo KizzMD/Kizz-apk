@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Kizz" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_bg</item>
+        <item name="android:statusBarColor">#FF0A0716</item>
+        <item name="android:navigationBarColor">#FF07040F</item>
+        <item name="android:windowSplashScreenBackground">#FF0A0716</item>
+    </style>
+</resources>
