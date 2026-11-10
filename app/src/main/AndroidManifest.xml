@@ -3,11 +3,16 @@
 
     <queries>
         <package android:name="com.roblox.client" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application
+        android:icon="@drawable/kizz_logo"
         android:label="KizzDev"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:theme="@style/Theme.Kizz">
 
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
@@ -19,6 +24,7 @@
 
         <activity
             android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
